@@ -76,7 +76,7 @@ def markers_json():
     out = []
     for r in rows:
         files = con.execute(
-            "SELECT id,name,thumb,description FROM files WHERE marker_id=? ORDER BY id",
+            "SELECT id,name,stored,thumb,description FROM files WHERE marker_id=? ORDER BY id",
             (r["id"],)).fetchall()
         out.append({
             "id": r["id"], "x": r["x"], "y": r["y"],
