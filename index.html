@@ -1,0 +1,574 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Карта меток</title>
+<style>
+  :root {
+    --accent: #e5383b;
+    --bg: #14161a;
+    --card: rgba(30, 33, 39, .94);
+    --border: rgba(255, 255, 255, .09);
+    --text: #eef0f2;
+    --muted: #9aa0a8;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { height: 100%; overflow: hidden; background: var(--bg); overscroll-behavior: none;
+    font: 15px/1.45 -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; color: var(--text); }
+  button { font-family: inherit; }
+
+  /* ==================== карта (canvas) ==================== */
+  #viewport { position: fixed; inset: 0; overflow: hidden; cursor: grab; touch-action: none; }
+  #viewport.dragging { cursor: grabbing; }
+  #viewport.mode-add { cursor: crosshair; }
+  #viewport.over-marker { cursor: pointer; }
+  #cv { position: absolute; inset: 0; display: block; }
+
+  /* ==================== кнопка добавления ==================== */
+  #fab { position: fixed; right: 18px; bottom: calc(18px + env(safe-area-inset-bottom)); z-index: 30;
+    display: flex; align-items: center; gap: 8px; padding: 14px 22px; border: none; border-radius: 999px;
+    background: var(--accent); color: #fff; font-size: 15px; font-weight: 600; cursor: pointer;
+    box-shadow: 0 8px 24px rgba(229, 56, 59, .45); transition: transform .15s, background .2s; }
+  #fab:active { transform: scale(.95); }
+  #fab.active { background: #343943; box-shadow: 0 8px 24px rgba(0, 0, 0, .5); }
+  #fab svg { width: 18px; height: 18px; }
+
+  /* подсказка в режиме добавления */
+  #modebar { position: fixed; left: 50%; bottom: calc(24px + env(safe-area-inset-bottom)); transform: translateX(-50%);
+    z-index: 31; display: flex; align-items: center; gap: 12px; padding: 10px 12px 10px 18px;
+    background: var(--card); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+    border: 1px solid var(--border); border-radius: 999px; box-shadow: 0 8px 30px rgba(0, 0, 0, .5);
+    font-size: 14px; white-space: nowrap; transition: opacity .2s, transform .2s; }
+  #modebar[hidden] { display: flex; opacity: 0; pointer-events: none; transform: translate(-50%, 12px); }
+  #modebar button { background: rgba(255, 255, 255, .1); border: none; color: var(--text);
+    border-radius: 999px; padding: 7px 14px; cursor: pointer; font-size: 13px; }
+
+  /* ==================== панели (листы) ==================== */
+  .sheet { position: fixed; z-index: 40; background: var(--card);
+    backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+    border: 1px solid var(--border); border-radius: 18px; box-shadow: 0 16px 50px rgba(0, 0, 0, .55);
+    top: 14px; right: 14px; bottom: 14px; width: 372px; max-width: calc(100vw - 28px);
+    padding: 20px; overflow-y: auto; overscroll-behavior: contain;
+    transform: translateX(calc(100% + 28px)); transition: transform .28s cubic-bezier(.32, .72, .35, 1); }
+  .sheet.open { transform: none; }
+  .sheet h3 { font-size: 18px; margin-bottom: 4px; }
+  .sheet .sub { color: var(--muted); font-size: 13px; margin-bottom: 14px; }
+  .sheet .grab { display: none; }
+
+  @media (max-width: 640px) {
+    .sheet { left: 0; right: 0; top: auto; bottom: 0; width: auto; max-width: none;
+      border-radius: 22px 22px 0 0; border-bottom: none; max-height: 74dvh;
+      padding: 10px 16px calc(16px + env(safe-area-inset-bottom));
+      transform: translateY(105%); }
+    .sheet .grab { display: block; width: 42px; height: 5px; border-radius: 3px;
+      background: rgba(255, 255, 255, .25); margin: 4px auto 12px; }
+    #fab { right: 14px; }
+  }
+
+  .x-btn { position: absolute; top: 14px; right: 14px; width: 34px; height: 34px; border-radius: 50%;
+    background: rgba(255, 255, 255, .08); border: none; color: var(--muted); cursor: pointer;
+    font-size: 17px; line-height: 1; }
+  @media (max-width: 640px) { .x-btn { top: 18px; } }
+
+  /* ==================== просмотр метки ==================== */
+  .photos { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 6px; }
+  .photos .p { background: rgba(255, 255, 255, .05); border: 1px solid var(--border);
+    border-radius: 12px; overflow: hidden; cursor: zoom-in; }
+  .photos img { width: 100%; height: 128px; object-fit: cover; display: block; }
+  .photos .d { font-size: 13px; color: #c9cdd3; padding: 8px 10px; word-break: break-word; }
+  .photos .d:empty { display: none; }
+  .empty { color: var(--muted); font-size: 14px; padding: 18px 0; text-align: center; }
+  .actions { display: flex; gap: 10px; margin-top: 16px; }
+  .btn { flex: 1; background: rgba(255, 255, 255, .08); color: var(--text);
+    border: 1px solid var(--border); border-radius: 12px; padding: 12px; cursor: pointer; font-size: 14px; }
+  .btn:active { background: rgba(255, 255, 255, .15); }
+  .btn.danger { color: #ff8487; }
+  .btn.primary { background: var(--accent); border-color: transparent; color: #fff; font-weight: 600; }
+
+  /* ==================== редактор файлов ==================== */
+  .fitem { display: flex; gap: 12px; background: rgba(255, 255, 255, .05);
+    border: 1px solid var(--border); border-radius: 12px; padding: 10px; margin-bottom: 10px; }
+  .fitem img { width: 58px; height: 58px; object-fit: cover; border-radius: 9px; background: #000; flex: none; }
+  .fitem .fi-body { flex: 1; min-width: 0; }
+  .fitem .fi-name { font-size: 12px; color: var(--muted); word-break: break-all; margin-bottom: 6px; }
+  .fitem input[type=text] { width: 100%; background: rgba(0, 0, 0, .3); color: var(--text);
+    border: 1px solid var(--border); border-radius: 8px; padding: 9px 10px; font-size: 14px; outline: none; }
+  .fitem input[type=text]:focus { border-color: var(--accent); }
+  .fitem .fi-del { flex: none; align-self: center; width: 32px; height: 32px; border-radius: 50%;
+    background: none; border: none; color: #ff8487; cursor: pointer; font-size: 16px; }
+  .attach-btn { width: 100%; padding: 13px; margin-top: 4px; background: rgba(255, 255, 255, .07);
+    border: 1px dashed rgba(255, 255, 255, .25); border-radius: 12px; color: var(--text);
+    cursor: pointer; font-size: 14px; }
+  .note { color: var(--muted); font-size: 12px; margin-top: 12px; text-align: center; }
+
+  /* ==================== лайтбокс ==================== */
+  #lightbox { position: fixed; inset: 0; z-index: 60; background: rgba(0, 0, 0, .92);
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    opacity: 0; pointer-events: none; transition: opacity .2s; }
+  #lightbox.open { opacity: 1; pointer-events: auto; }
+  #lightbox img { max-width: 100vw; max-height: 78dvh; object-fit: contain; }
+  #lightbox .cap { color: #cfd3d8; font-size: 14px; padding: 14px 20px; text-align: center; max-width: 90vw; }
+  #lightbox .lb-x { position: absolute; top: calc(14px + env(safe-area-inset-top)); right: 16px;
+    width: 42px; height: 42px; border-radius: 50%; background: rgba(255, 255, 255, .12);
+    border: none; color: #fff; font-size: 20px; cursor: pointer; }
+  #lightbox .lb-nav { position: absolute; top: 50%; transform: translateY(-50%); width: 46px; height: 46px;
+    border-radius: 50%; background: rgba(255, 255, 255, .12); border: none; color: #fff;
+    font-size: 22px; cursor: pointer; }
+  #lightbox .lb-prev { left: 12px; } #lightbox .lb-next { right: 12px; }
+  #lightbox .lb-count { position: absolute; top: calc(20px + env(safe-area-inset-top)); left: 20px;
+    color: #aab; font-size: 14px; }
+</style>
+</head>
+<body>
+
+<div id="viewport">
+  <canvas id="cv"></canvas>
+</div>
+
+<button id="fab">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round">
+    <path d="M12 21s-7-5.5-7-11a7 7 0 0 1 14 0c0 5.5-7 11-7 11z"/><circle cx="12" cy="10" r="2.6"/>
+  </svg>
+  Добавить метку
+</button>
+
+<div id="modebar" hidden>
+  Коснитесь места на карте
+  <button id="modeCancel">Отмена</button>
+</div>
+
+<div class="sheet" id="popup"></div>
+<div class="sheet" id="editor"></div>
+
+<div id="lightbox">
+  <span class="lb-count" id="lbCount"></span>
+  <button class="lb-x" onclick="closeLightbox()">✕</button>
+  <button class="lb-nav lb-prev" onclick="lightboxStep(-1)">‹</button>
+  <img id="lbImg" alt="">
+  <button class="lb-nav lb-next" onclick="lightboxStep(1)">›</button>
+  <div class="cap" id="lbCap"></div>
+</div>
+
+<script>
+"use strict";
+/* ==================== канвас-карта ==================== */
+const MAP_W = 17820, MAP_H = 9720, TILE = 1024, COLS = 18, ROWS = 10;
+const PIN_SCREEN = 44;
+const vp = document.getElementById("viewport");
+const cv = document.getElementById("cv");
+const ctx = cv.getContext("2d");
+
+let scale = 1, ox = 0, oy = 0, MIN = .05, MAX = 2;
+let dpr = 1;
+
+const pinImg = new Image();
+pinImg.src = "/static/point.png";
+
+function resize() {
+  dpr = Math.min(devicePixelRatio || 1, 2);   // выше 2x смысла нет, экономим память
+  cv.width = Math.round(innerWidth * dpr);
+  cv.height = Math.round(innerHeight * dpr);
+  cv.style.width = innerWidth + "px";
+  cv.style.height = innerHeight + "px";
+  clampView();
+  scheduleRender();
+}
+function fit() {
+  MIN = Math.max(innerWidth / MAP_W, innerHeight / MAP_H);
+  scale = MIN;
+  ox = (innerWidth - MAP_W * scale) / 2;
+  oy = (innerHeight - MAP_H * scale) / 2;
+}
+function clampView() {
+  scale = Math.min(Math.max(scale, MIN), MAX);
+  ox = Math.min(0, Math.max(ox, innerWidth - MAP_W * scale));
+  oy = Math.min(0, Math.max(oy, innerHeight - MAP_H * scale));
+}
+
+/* ---------- тайлы: подгрузка видимых, выгрузка далёких ---------- */
+const tileCache = new Map();   // "r_c" -> {img, ok}
+
+function ensureTiles() {
+  const x0 = -ox / scale, y0 = -oy / scale;
+  const x1 = (innerWidth - ox) / scale, y1 = (innerHeight - oy) / scale;
+  const m = TILE * 1.5;
+  const c0 = Math.max(0, Math.floor((x0 - m) / TILE)), c1 = Math.min(COLS - 1, Math.floor((x1 + m) / TILE));
+  const r0 = Math.max(0, Math.floor((y0 - m) / TILE)), r1 = Math.min(ROWS - 1, Math.floor((y1 + m) / TILE));
+  for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) {
+    const key = r + "_" + c;
+    if (!tileCache.has(key)) {
+      const img = new Image();
+      const entry = { img, ok: false };
+      img.onload = () => { entry.ok = true; scheduleRender(); };
+      img.src = "/static/tiles/" + key + ".jpg?v=3";
+      tileCache.set(key, entry);
+    }
+  }
+  for (const [key, entry] of tileCache) {
+    const [r, c] = key.split("_").map(Number);
+    if (c < c0 - 1 || c > c1 + 1 || r < r0 - 1 || r > r1 + 1) {
+      entry.img.src = "";
+      tileCache.delete(key);
+    }
+  }
+}
+
+/* ---------- отрисовка ---------- */
+let rafPending = false;
+function scheduleRender() {
+  if (!rafPending) {
+    rafPending = true;
+    requestAnimationFrame(() => { rafPending = false; draw(); });
+  }
+}
+
+function draw() {
+  ensureTiles();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.fillStyle = "#14161a";
+  ctx.fillRect(0, 0, cv.width, cv.height);
+
+  /* тайлы в мировых координатах */
+  ctx.setTransform(dpr * scale, 0, 0, dpr * scale, dpr * ox, dpr * oy);
+  const x0 = -ox / scale, y0 = -oy / scale;
+  const x1 = (innerWidth - ox) / scale, y1 = (innerHeight - oy) / scale;
+  const c0 = Math.max(0, Math.floor(x0 / TILE)), c1 = Math.min(COLS - 1, Math.floor(x1 / TILE));
+  const r0 = Math.max(0, Math.floor(y0 / TILE)), r1 = Math.min(ROWS - 1, Math.floor(y1 / TILE));
+  /* у правого/нижнего края карты тайл меньше 1024 — рисуем его реальный размер.
+     Каждый тайл рисуем с запасом ~1px: стык закрывает сосед, нарисованный поверх,
+     иначе между отдельными drawImage остаётся тёмная щель (фон канваса) */
+  const ov = 1.25 / scale;
+  for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) {
+    const entry = tileCache.get(r + "_" + c);
+    if (!entry || !entry.ok) continue;
+    const iw = Math.min(TILE, MAP_W - c * TILE);
+    const ih = Math.min(TILE, MAP_H - r * TILE);
+    ctx.drawImage(entry.img, 0, 0, iw, ih, c * TILE, r * TILE, iw + ov, ih + ov);
+  }
+
+  /* значки меток: постоянный экранный размер */
+  if (pinImg.complete) {
+    const w = PIN_SCREEN / scale;
+    for (const m of markers) {
+      ctx.drawImage(pinImg, m.x - w / 2, m.y - w, w, w);
+    }
+    if (pendingXY) {
+      ctx.globalAlpha = .65;
+      ctx.drawImage(pinImg, pendingXY.x - w / 2, pendingXY.y - w, w, w);
+      ctx.globalAlpha = 1;
+    }
+  }
+
+  /* бейджи со счётчиком — в экранных координатах */
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  for (const m of markers) {
+    if (!m.files.length) continue;
+    const sx = m.x * scale + ox, sy = m.y * scale + oy;
+    const bx = sx + PIN_SCREEN * .42, by = sy - PIN_SCREEN * .88, br = 9.5;
+    ctx.beginPath();
+    ctx.arc(bx, by, br, 0, Math.PI * 2);
+    ctx.fillStyle = "#e5383b";
+    ctx.fill();
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = "#fff";
+    ctx.stroke();
+    ctx.fillStyle = "#fff";
+    ctx.font = "700 11px system-ui, sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(String(m.files.length), bx, by + .5);
+  }
+}
+
+addEventListener("resize", resize);
+fit(); resize();
+
+/* ---------- масштаб колесом к курсору ---------- */
+vp.addEventListener("wheel", e => {
+  e.preventDefault();
+  const ns = Math.min(Math.max(scale * (e.deltaY < 0 ? 1.25 : 1 / 1.25), MIN), MAX);
+  ox = e.clientX - (e.clientX - ox) * (ns / scale);
+  oy = e.clientY - (e.clientY - oy) * (ns / scale);
+  scale = ns;
+  clampView(); scheduleRender();
+}, { passive: false });
+
+/* ---------- перетаскивание (мышь/тач) + pinch ---------- */
+const ptrs = new Map();
+let dragMoved = 0, pinchD = 0, downX = 0, downY = 0;
+vp.addEventListener("pointerdown", e => {
+  vp.setPointerCapture(e.pointerId);
+  ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  dragMoved = 0; downX = e.clientX; downY = e.clientY;
+  if (ptrs.size === 2) {
+    const [a, b] = [...ptrs.values()];
+    pinchD = Math.hypot(a.x - b.x, a.y - b.y);
+  }
+  vp.classList.add("dragging");
+});
+vp.addEventListener("pointermove", e => {
+  if (!ptrs.has(e.pointerId)) { hoverCheck(e); return; }
+  const prev = ptrs.get(e.pointerId);
+  ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (ptrs.size === 1) {
+    dragMoved += Math.abs(e.clientX - prev.x) + Math.abs(e.clientY - prev.y);
+    ox += e.clientX - prev.x; oy += e.clientY - prev.y;
+    clampView(); scheduleRender();
+  } else if (ptrs.size === 2) {
+    const [a, b] = [...ptrs.values()];
+    const d = Math.hypot(a.x - b.x, a.y - b.y);
+    if (pinchD > 0 && Math.abs(d - pinchD) > 1) {
+      const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+      const ns = Math.min(Math.max(scale * d / pinchD, MIN), MAX);
+      ox = mx - (mx - ox) * (ns / scale);
+      oy = my - (my - oy) * (ns / scale);
+      scale = ns; clampView(); scheduleRender();
+    }
+    pinchD = d; dragMoved = 99;
+  }
+});
+function markerAt(cx, cy) {
+  const mx = (cx - ox) / scale, my = (cy - oy) / scale;
+  let best = null, bestD = PIN_SCREEN * .75;
+  for (const m of markers) {
+    const sx = m.x * scale + ox, sy = m.y * scale + oy;
+    if (Math.abs(cx - sx) < PIN_SCREEN * .6 && cy > sy - PIN_SCREEN * 1.1 && cy < sy + PIN_SCREEN * .25) {
+      const d = Math.hypot(cx - sx, cy - sy);
+      if (d < bestD) { bestD = d; best = m; }
+    }
+  }
+  return best;
+}
+function hoverCheck(e) {
+  if (addMode) return;
+  vp.classList.toggle("over-marker", !!markerAt(e.clientX, e.clientY));
+}
+function ptrUp(e) {
+  ptrs.delete(e.pointerId);
+  if (ptrs.size < 2) pinchD = 0;
+  if (ptrs.size === 0) {
+    vp.classList.remove("dragging");
+    if (dragMoved < 6) {
+      const mx = (e.clientX - ox) / scale, my = (e.clientY - oy) / scale;
+      if (addMode) {
+        if (mx >= 0 && my >= 0 && mx <= MAP_W && my <= MAP_H) openEditor(null, mx, my);
+      } else {
+        const m = markerAt(e.clientX, e.clientY);
+        if (m) openPopup(m);
+      }
+    }
+  }
+}
+vp.addEventListener("pointerup", ptrUp);
+vp.addEventListener("pointercancel", ptrUp);
+
+/* ==================== метки ==================== */
+let markers = [];
+let addMode = false;
+let pendingXY = null;
+
+function fileImg(f) { return f.thumb ? "/thumbs/" + f.thumb : "/uploads/" + f.stored; }
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+async function loadMarkers() {
+  const r = await fetch("/api/markers");
+  markers = await r.json();
+  scheduleRender();
+}
+
+/* ==================== режим добавления ==================== */
+const fab = document.getElementById("fab");
+const modebar = document.getElementById("modebar");
+function setAddMode(on) {
+  addMode = on;
+  fab.classList.toggle("active", on);
+  modebar.hidden = !on;
+  vp.classList.toggle("mode-add", on);
+  if (!on) pendingXY = null;
+  scheduleRender();
+}
+fab.onclick = () => setAddMode(!addMode);
+document.getElementById("modeCancel").onclick = () => setAddMode(false);
+
+/* ==================== просмотр метки (попап) ==================== */
+const popup = document.getElementById("popup");
+let popupMarker = null;
+
+function openPopup(m) {
+  popupMarker = m;
+  let html = '<div class="grab"></div><button class="x-btn" onclick="closePopup()">✕</button>' +
+    "<h3>Метка #" + m.id + '</h3><div class="sub">' + esc(m.created_at || "") + "</div>";
+  if (m.files.length) {
+    html += '<div class="photos">';
+    m.files.forEach((f, i) => {
+      html += '<div class="p" onclick="openLightbox(' + i + ')"><img src="' + fileImg(f) +
+        '" loading="lazy" alt=""><div class="d">' + esc(f.description || "") + "</div></div>";
+    });
+    html += "</div>";
+  } else {
+    html += '<div class="empty">К этой метке пока не прикреплены файлы</div>';
+  }
+  html += '<div class="actions"><button class="btn" onclick="editFromPopup()">✏️ Изменить</button>' +
+    '<button class="btn danger" onclick="deleteFromPopup()">🗑 Удалить</button></div>';
+  popup.innerHTML = html;
+  popup.classList.add("open");
+}
+function closePopup() { popup.classList.remove("open"); popupMarker = null; }
+popup.addEventListener("pointerdown", e => e.stopPropagation());
+function editFromPopup() { const m = popupMarker; closePopup(); if (m) openEditor(m); }
+async function deleteFromPopup() {
+  const m = popupMarker;
+  if (!m || !confirm("Удалить метку #" + m.id + " со всеми файлами?")) return;
+  await fetch("/api/markers/" + m.id + "/delete", { method: "POST" });
+  closePopup();
+  await loadMarkers();
+}
+
+/* ==================== лайтбокс ==================== */
+const lightbox = document.getElementById("lightbox");
+const lbImg = document.getElementById("lbImg");
+const lbCap = document.getElementById("lbCap");
+const lbCount = document.getElementById("lbCount");
+let lbFiles = [], lbIdx = 0;
+
+function openLightbox(i) {
+  lbFiles = popupMarker ? popupMarker.files : [];
+  lbIdx = i;
+  lbShow();
+  lightbox.classList.add("open");
+}
+function lbShow() {
+  const f = lbFiles[lbIdx];
+  lbImg.src = "/uploads/" + f.stored;
+  lbCap.textContent = f.description || "";
+  lbCount.textContent = (lbIdx + 1) + " / " + lbFiles.length;
+  const vis = lbFiles.length > 1 ? "visible" : "hidden";
+  document.querySelector(".lb-prev").style.visibility = vis;
+  document.querySelector(".lb-next").style.visibility = vis;
+}
+function lightboxStep(d) { lbIdx = (lbIdx + d + lbFiles.length) % lbFiles.length; lbShow(); }
+function closeLightbox() { lightbox.classList.remove("open"); lbImg.src = ""; }
+lightbox.addEventListener("click", e => { if (e.target === lightbox) closeLightbox(); });
+
+/* ==================== редактор (добавление / изменение) ==================== */
+const editor = document.getElementById("editor");
+let editState = null;   // {id|null, x, y, newItems:[], delIds:Set}
+
+function openEditor(m, px, py) {
+  editState = {
+    id: m ? m.id : null,
+    x: m ? m.x : px, y: m ? m.y : py,
+    newItems: [], delIds: new Set(),
+  };
+  pendingXY = m ? null : { x: px, y: py };
+  scheduleRender();
+  editor.innerHTML =
+    '<div class="grab"></div><button class="x-btn" id="edClose">✕</button>' +
+    "<h3>" + (m ? "Изменить метку #" + m.id : "Новая метка") + "</h3>" +
+    '<div class="sub">' + (m ? "Файлы и описания метки" : "Прикрепите файлы и добавьте описания") + "</div>" +
+    '<div id="edList"></div>' +
+    '<button class="attach-btn" id="edAttach">📎 Прикрепить файлы</button>' +
+    '<input type="file" id="edInput" multiple hidden>' +
+    '<div class="actions"><button class="btn primary" id="edSave">Сохранить</button>' +
+    '<button class="btn" id="edCancel">Отмена</button></div>' +
+    '<div class="note">Файлы хранятся в базе данных на сервере</div>';
+  editor.classList.add("open");
+  renderEditorList(m);
+  document.getElementById("edClose").onclick = () => { closeEditor(); setAddMode(false); };
+  document.getElementById("edCancel").onclick = () => { closeEditor(); setAddMode(false); };
+  document.getElementById("edAttach").onclick = () => document.getElementById("edInput").click();
+  document.getElementById("edInput").onchange = e => {
+    for (const f of e.target.files)
+      editState.newItems.push({ file: f, desc: "", url: URL.createObjectURL(f) });
+    e.target.value = "";
+    renderEditorList(m);
+  };
+  document.getElementById("edSave").onclick = () => saveEditor(m);
+}
+editor.addEventListener("pointerdown", e => e.stopPropagation());
+
+function renderEditorList(m) {
+  const list = document.getElementById("edList");
+  let html = "";
+  if (m) {
+    for (const f of m.files) {
+      if (editState.delIds.has(f.id)) continue;
+      html += '<div class="fitem" data-fid="' + f.id + '"><img src="' + fileImg(f) + '">' +
+        '<div class="fi-body"><div class="fi-name">' + esc(f.name || "") + '</div>' +
+        '<input type="text" class="ed-desc" value="' + esc(f.description || "") + '" placeholder="Описание"></div>' +
+        '<button class="fi-del">✕</button></div>';
+    }
+  }
+  editState.newItems.forEach((it, i) => {
+    html += '<div class="fitem" data-new="' + i + '"><img src="' + it.url + '">' +
+      '<div class="fi-body"><div class="fi-name">' + esc(it.file.name) + "</div>" +
+      '<input type="text" class="ed-desc" value="' + esc(it.desc) + '" placeholder="Описание"></div>' +
+      '<button class="fi-del">✕</button></div>';
+  });
+  if (!html) html = '<div class="empty">Файлов пока нет</div>';
+  list.innerHTML = html;
+  list.querySelectorAll(".fitem").forEach(row => {
+    const inp = row.querySelector(".ed-desc");
+    if (row.dataset.fid) {
+      const fid = +row.dataset.fid;
+      inp.oninput = () => { const f = m.files.find(x => x.id === fid); if (f) f._d = inp.value; };
+      row.querySelector(".fi-del").onclick = () => { editState.delIds.add(fid); renderEditorList(m); };
+    } else {
+      const i = +row.dataset.new;
+      inp.oninput = () => { editState.newItems[i].desc = inp.value; };
+      row.querySelector(".fi-del").onclick = () => {
+        URL.revokeObjectURL(editState.newItems[i].url);
+        editState.newItems.splice(i, 1); renderEditorList(m);
+      };
+    }
+  });
+}
+
+async function saveEditor(m) {
+  const fd = new FormData();
+  let url;
+  if (editState.id) {
+    url = "/api/markers/" + editState.id + "/edit";
+    for (const f of m.files) {
+      if (editState.delIds.has(f.id)) continue;
+      fd.append("fdesc_" + f.id, f._d !== undefined ? f._d : (f.description || ""));
+    }
+    if (editState.delIds.size) fd.append("del", [...editState.delIds].join(","));
+  } else {
+    url = "/api/markers";
+    fd.append("x", editState.x); fd.append("y", editState.y);
+  }
+  for (const it of editState.newItems) {
+    fd.append("desc", it.desc);
+    fd.append("file", it.file);
+  }
+  const btn = document.getElementById("edSave");
+  btn.disabled = true; btn.textContent = "Сохранение…";
+  try {
+    const r = await fetch(url, { method: "POST", body: fd });
+    if (!(await r.json()).ok) throw 0;
+    closeEditor(); setAddMode(false);
+    await loadMarkers();
+  } catch {
+    btn.disabled = false; btn.textContent = "Сохранить";
+    alert("Не удалось сохранить. Проверьте соединение с сервером.");
+  }
+}
+function closeEditor() { editor.classList.remove("open"); editState = null; pendingXY = null; scheduleRender(); }
+
+/* ==================== клавиатура ==================== */
+addEventListener("keydown", e => {
+  if (e.key === "Escape") { closeLightbox(); closePopup(); closeEditor(); setAddMode(false); }
+  if (lightbox.classList.contains("open")) {
+    if (e.key === "ArrowRight") lightboxStep(1);
+    if (e.key === "ArrowLeft") lightboxStep(-1);
+  }
+});
+
+/* старт */
+loadMarkers();
+</script>
+</body>
+</html>

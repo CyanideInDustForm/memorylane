@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: danya-map
+    runtime: python
+    plan: starter          # платный инстанс: не засыпает, к нему можно диск
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn server:app --workers 2 --threads 8 --timeout 120
+    envVars:
+      - key: DATA_DIR
+        value: /var/data   # Persistent Disk: база и фото переживают redeploy
+    disk:
+      name: danya-data
+      mountPath: /var/data
+      sizeGB: 10
