@@ -548,12 +548,15 @@ async function saveEditor(m) {
   btn.disabled = true; btn.textContent = "Сохранение…";
   try {
     const r = await fetch(url, { method: "POST", body: fd });
-    if (!(await r.json()).ok) throw 0;
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok || !data.ok) {
+      throw new Error("HTTP " + r.status + ": " + (data.error || r.statusText || "без текста"));
+    }
     closeEditor(); setAddMode(false);
     await loadMarkers();
-  } catch {
+  } catch (err) {
     btn.disabled = false; btn.textContent = "Сохранить";
-    alert("Не удалось сохранить. Проверьте соединение с сервером.");
+    alert("Не удалось сохранить.\n" + (err && err.message ? err.message : "Сервер недоступен."));
   }
 }
 function closeEditor() { editor.classList.remove("open"); editState = null; pendingXY = null; scheduleRender(); }

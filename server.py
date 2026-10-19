@@ -209,8 +209,22 @@ def uploaded(kind, name):
     return send_from_directory(folder, name)
 
 
+@app.errorhandler(413)
+def too_large(e):
+    return jsonify({"ok": False, "error": "Файл слишком большой (лимит 512 МБ на запрос)"}), 413
+
+
+@app.errorhandler(500)
+def server_err(e):
+    return jsonify({"ok": False, "error": "Внутренняя ошибка сервера: " + str(e)}), 500
+
+
+# Инициализация при старте — в том числе под gunicorn (импорт модуля),
+# иначе папки uploads/thumbs и таблицы не создадутся на чистом сервере.
+init_db()
+
+
 if __name__ == "__main__":
-    init_db()
     print("Сервер запущен: http://localhost:%d" % PORT)
     print("Pillow (миниатюры):", "есть" if PIL_OK else "нет")
     app.run(host="0.0.0.0", port=PORT, threaded=True)
